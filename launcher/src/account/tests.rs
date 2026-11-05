@@ -7,6 +7,23 @@ use std::sync::Arc;
 
 const UUID: &str = "069a79f444e94726a5befca90e38aaf5";
 
+#[test]
+fn a_local_java_identity_is_stable_and_has_no_microsoft_session() {
+    let mut accounts = Accounts::default();
+    let default = local_java_player(&accounts).unwrap();
+    assert_eq!(default.name, "Player");
+    assert_eq!(default.token, "0");
+    assert!(default.xuid.is_empty());
+    accounts.offline_selected = Some("Notch".into());
+    let player = local_java_player(&accounts).unwrap();
+    assert_eq!(player.name, "Notch");
+    assert_eq!(player.uuid, "b50ad385829d3141a2167e7d7539ba7f");
+    assert_eq!(player.uuid, local_java_player(&accounts).unwrap().uuid);
+    assert_eq!(player.token, "0");
+    accounts.offline_selected = Some("bad name".into());
+    assert!(local_java_player(&accounts).is_err());
+}
+
 /// What the mock answers and what it was asked.
 #[derive(Default)]
 struct Mock {
