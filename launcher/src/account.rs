@@ -2352,6 +2352,9 @@ fn account_sessions_until(
 /// token on its command line, as Mojang's launcher gives it; that command is never logged.
 pub fn java_player() -> Result<crate::java_launch::Player, String> {
     let mut accounts = Accounts::load();
+    if crate::local::policy().local_only {
+        return local_java_player(&accounts);
+    }
     let player = java_player_with(
         &Endpoints::live(),
         client_id().as_deref(),
@@ -2362,6 +2365,23 @@ pub fn java_player() -> Result<crate::java_launch::Player, String> {
         eprintln!("Horizon: the accounts are not saved: {e}");
     }
     player
+}
+
+/// A stable Minecraft offline identity. No keychain, saved Microsoft token or account writes.
+fn local_java_player(accounts: &Accounts) -> Result<crate::java_launch::Player, String> {
+    let name = accounts.name_arg().unwrap_or("Player");
+    if !valid_offline_name(name) {
+        return Err(crate::i18n::tr(
+            "Choose a local name with 3 to 16 letters, digits or underscores.",
+        )
+        .to_string());
+    }
+    Ok(crate::java_launch::Player {
+        name: name.to_string(),
+        uuid: format!("{:032x}", horizon_protocol::crypto::offline_uuid(name)),
+        token: "0".into(),
+        xuid: String::new(),
+    })
 }
 
 fn java_player_with(

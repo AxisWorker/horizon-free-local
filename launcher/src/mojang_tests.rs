@@ -274,6 +274,46 @@ fn version_file_paths_stay_in_the_folder() {
 }
 
 #[test]
+fn a_complete_install_resumes_missing_assets_and_then_needs_no_network() {
+    let (pins, files) = mojang();
+    let sound = {
+        let hash = sha1_hex(SOUND);
+        format!("{OBJECTS}/{}/{hash}", &hash[..2])
+    };
+    let dir = scratch("complete-local");
+    let server = Server {
+        files,
+        asked: Mutex::new(Vec::new()),
+    };
+    let interrupted = |url: &str| {
+        if url == sound {
+            Err("connection interrupted".to_string())
+        } else {
+            server.fetch(url)
+        }
+    };
+    let error = download_complete(&pins, &dir, "linux", 3, &interrupted, &GO, &|_| {})
+        .unwrap_err();
+    assert!(error.contains("connection interrupted"), "{error}");
+    assert_eq!(fs::read(dir.join("versions/26.3/26.3.jar")).unwrap(), CLIENT);
+    server.asked();
+    download_complete(&pins, &dir, "linux", 3, &|url| server.fetch(url), &GO, &|_| {})
+        .unwrap();
+    assert_eq!(server.asked(), [sound]);
+    download_complete(
+        &pins,
+        &dir,
+        "linux",
+        3,
+        &|_| panic!("a complete installation must reuse its verified files"),
+        &GO,
+        &|_| {},
+    )
+    .unwrap();
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn links_stay_inside_the_runtime() {
     let at = |p: &str| PathBuf::from(p);
     assert!(link_stays_inside(

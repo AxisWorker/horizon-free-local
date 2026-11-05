@@ -54,6 +54,33 @@ pub fn download(
     cancel: &AtomicBool,
     log: &dyn Fn(String),
 ) -> Result<(), String> {
+    download_with(pins, dir, os, (jobs, false), fetch, cancel, log)
+}
+
+/// A complete first installation: missing assets are an error, so a Java instance is never
+/// marked ready for offline use after a partial download. A retry keeps verified files.
+pub fn download_complete(
+    pins: &Pins,
+    dir: &Path,
+    os: &str,
+    jobs: usize,
+    fetch: Fetch,
+    cancel: &AtomicBool,
+    log: &dyn Fn(String),
+) -> Result<(), String> {
+    download_with(pins, dir, os, (jobs, true), fetch, cancel, log)
+}
+
+fn download_with(
+    pins: &Pins,
+    dir: &Path,
+    os: &str,
+    options: (usize, bool),
+    fetch: Fetch,
+    cancel: &AtomicBool,
+    log: &dyn Fn(String),
+) -> Result<(), String> {
+    let (jobs, complete) = options;
     let v = &pins.version;
     let versions = dir.join("versions").join(v);
     let manifest = versions.join(format!("{v}.json"));
@@ -140,7 +167,7 @@ pub fn download(
             fetch_each(&objects, jobs, &retrying, cancel, log, false)
         });
     match assets {
-        Err(e) if e == CANCELLED => return Err(e),
+        Err(e) if complete || e == CANCELLED => return Err(e),
         Err(e) => log(format!("The sounds could not all be downloaded: {e}")),
         Ok(()) => {}
     }

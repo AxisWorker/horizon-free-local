@@ -61,7 +61,11 @@ impl LoaderVersions {
 impl Default for JavaChoice {
     fn default() -> Self {
         JavaChoice {
-            kind: NewKind::Horizon,
+            kind: if horizon_launcher::local::policy().local_only {
+                NewKind::Vanilla
+            } else {
+                NewKind::Horizon
+            },
             loader: Loader::Fabric,
             version: None,
             snapshots: false,
@@ -264,6 +268,7 @@ impl Launcher {
     /// A Java kind's part of the dialog: the version (search, kinds, list), the loader for
     /// Modded, and where the game comes from.
     pub(super) fn java_choice_rows(&mut self, cx: &mut Context<Self>) -> Div {
+        self.load_versions(cx);
         let t = self.theme;
         let n = t.night;
         let Some(choice) = self.instances.dialog.as_ref().map(|d| d.java.clone()) else {
@@ -429,7 +434,7 @@ impl Launcher {
             }
         }
         rows.child(shell::text(night::CAPTION, c(n.muted)).child(
-            tr("Play downloads the game from Mojang for your account the first time, with the Java it needs.")
+            tr("Choose a version, create the instance and press Play. The first launch downloads Minecraft and Java; later launches work offline with your local name.")
                 .to_string(),
         ))
     }

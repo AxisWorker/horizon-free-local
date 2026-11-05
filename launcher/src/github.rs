@@ -44,7 +44,7 @@ pub(crate) enum Answer {
 
 /// GitHub's JSON for `url` (`https://api.github.com/...`). A 404 is the error `<url> answered 404`.
 pub fn json(url: &str) -> Result<serde_json::Value, String> {
-    if crate::local::policy().local_only {
+    if crate::local::policy().offline {
         return read_kept(&cache_dir().join(cache_name(url)), url)
             .map(|kept| kept.body)
             .ok_or_else(|| {

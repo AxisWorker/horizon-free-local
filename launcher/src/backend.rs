@@ -1520,6 +1520,9 @@ fn download_for_owner(
     log: &dyn Fn(String),
 ) -> Result<(), String> {
     crate::local::require_online()?;
+    if crate::local::policy().local_only {
+        return download_local(pins, dir, fetch, log);
+    }
     let mut accounts = account::Accounts::load();
     // The strict gate, never `launch_for_game`: the developer option that lets offline names
     // play without an owner must not download the game for them.
@@ -1533,6 +1536,29 @@ fn download_for_owner(
         log(format!("Horizon: the accounts are not saved: {e}"));
     }
     download_for(pins, dir, pass, !accounts.accounts.is_empty(), fetch, log)
+}
+
+/// User-requested installation with a local identity. The public version manifest, client,
+/// libraries and assets retain Mojang's hash checks and resumable file writes.
+fn download_local(
+    pins: &sources::Pins,
+    dir: &Path,
+    fetch: sources::Fetch,
+    log: &dyn Fn(String),
+) -> Result<(), String> {
+    mojang::download_complete(
+        pins,
+        dir,
+        crate::java_launch::os_name(),
+        if crate::local::policy().low_resource {
+            3
+        } else {
+            8
+        },
+        fetch,
+        &mojang::CANCEL,
+        log,
+    )
 }
 
 /// Downloads Minecraft `id` (any version on Mojang's list, its version file's sha1 from it) into
@@ -1568,6 +1594,7 @@ pub fn java_game(
     server: Option<&str>,
     log: &dyn Fn(String),
 ) -> Result<Command, String> {
+    mojang::CANCEL.store(false, std::sync::atomic::Ordering::Relaxed);
     let game = instance.java.as_ref().ok_or_else(|| {
         format!(
             "{} plays Horizon, not Minecraft: Java Edition",
@@ -1947,7 +1974,7 @@ pub fn preparer(
                 .join("server-jars")
                 .join(format!("{version}.jar"))
         });
-    if !reused && !jar.is_file() && crate::local::policy().local_only {
+    if !reused && !jar.is_file() && crate::local::policy().offline {
         return Err(crate::i18n::tr(
             "Local preparation needs your server jar. Set HORIZON_SERVER_JAR to its full path.",
         )

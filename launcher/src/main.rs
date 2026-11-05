@@ -761,7 +761,8 @@ impl Launcher {
             this.fetch_links();
             this.watch_shop(cx);
         } else {
-            this.releases = Load::Ready(Vec::new());
+            // Catalog only: no automatic installation, account services or self-update.
+            this.fetch_releases();
         }
         if home::getting_ready_preview() {
             this.preparing = true;
@@ -3232,8 +3233,10 @@ impl Launcher {
         // No launcher folder with Minecraft on this computer: an owner needs none.
         let no_install = self.settings.minecraft_dir.is_none();
         let resources_value = match first {
-            _ if horizon_launcher::local::policy().local_only && !prepared =>
-                backend::resources_summary(false, !silent, &version),
+            _ if horizon_launcher::local::policy().local_only && !prepared => trf(
+                "Play downloads and prepares Minecraft {version}. After installation, play offline with your local name.",
+                &[("version", &version)],
+            ),
             _ if self.preparing => tr("Preparing…").to_string(),
             Some(true) if no_install => trf(
                 "Not prepared. Play downloads Minecraft {version} from Mojang for your account and prepares it.",
@@ -3346,7 +3349,7 @@ impl Launcher {
                 Some(
                     div()
                         .child(trf(
-                            "Minecraft {version} (Java Edition). Play downloads it from Mojang for your account the first time, with the Java it needs.",
+                            "Minecraft {version} (Java Edition). The first Play installs Minecraft and Java. After installation, play offline with your local name.",
                             &[("version", &java.minecraft)],
                         ))
                         .into_any_element(),
