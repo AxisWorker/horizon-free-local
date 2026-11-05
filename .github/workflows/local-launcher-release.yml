@@ -45,13 +45,13 @@ jobs:
     timeout-minutes: 60
     env:
       RUSTFLAGS: ${{ matrix.rustflags }}
-      HORIZON_LAUNCHER_HOME: ${{ runner.temp }}/local-launcher-test/launcher
-      HORIZON_HOME: ${{ runner.temp }}/local-launcher-test/game
-      XDG_DATA_HOME: ${{ runner.temp }}/local-launcher-test/data
-      XDG_CONFIG_HOME: ${{ runner.temp }}/local-launcher-test/config
-      HORIZON_LAUNCHER_TRASH: ${{ runner.temp }}/local-launcher-test/trash
-      HORIZON_LAUNCHER_CLIPBOARD: ${{ runner.temp }}/local-launcher-test/clipboard
-      HORIZON_LAUNCHER_DESKTOP: ${{ runner.temp }}/local-launcher-test/desktop
+      HORIZON_LAUNCHER_HOME: ${{ github.workspace }}/.local-launcher-test/launcher
+      HORIZON_HOME: ${{ github.workspace }}/.local-launcher-test/game
+      XDG_DATA_HOME: ${{ github.workspace }}/.local-launcher-test/data
+      XDG_CONFIG_HOME: ${{ github.workspace }}/.local-launcher-test/config
+      HORIZON_LAUNCHER_TRASH: ${{ github.workspace }}/.local-launcher-test/trash
+      HORIZON_LAUNCHER_CLIPBOARD: ${{ github.workspace }}/.local-launcher-test/clipboard
+      HORIZON_LAUNCHER_DESKTOP: ${{ github.workspace }}/.local-launcher-test/desktop
     defaults:
       run:
         shell: bash
