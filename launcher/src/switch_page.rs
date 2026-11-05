@@ -40,6 +40,7 @@ impl Launcher {
             .accounts
             .accounts
             .iter()
+            .filter(|_| !horizon_launcher::local::policy().local_only)
             .map(|a| {
                 (
                     Player::Microsoft(a.uuid.clone()),

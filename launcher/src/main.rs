@@ -486,22 +486,30 @@ impl Launcher {
             cx.notify();
         });
         cx.spawn(async move |this, cx| loop {
-            cx.background_executor()
-                .timer(Duration::from_millis(80))
-                .await;
-            if this.update(cx, |this, cx| this.drain(cx)).is_err() {
-                break;
-            }
+            let next = this.update(cx, |this, cx| {
+                this.drain(cx);
+                let busy =
+                    this.preparing || this.starting_client.is_some() || this.installing.is_some();
+                horizon_launcher::local::policy().poll_interval(busy)
+            });
+            let Ok(next) = next else { break };
+            cx.background_executor().timer(next).await;
         })
         .detach();
         // Counts the time a partner banner is on screen, until it may be hidden.
         cx.spawn(async move |this, cx| loop {
+            if horizon_launcher::local::policy().low_resource {
+                break;
+            }
             cx.background_executor()
                 .timer(Duration::from_secs(10))
                 .await;
             let counting = this.update(cx, |this, cx| {
                 let s = &mut this.settings;
-                if s.partner_hidden || s.partner_seen_secs >= partner::SEEN_BEFORE_HIDE {
+                if horizon_launcher::local::policy().low_resource
+                    || s.partner_hidden
+                    || s.partner_seen_secs >= partner::SEEN_BEFORE_HIDE
+                {
                     return false;
                 }
                 // On screen on every page: the card in the sidebar, the banner on Servers.
@@ -558,15 +566,16 @@ impl Launcher {
             settings_marked: 0,
             mods_sticky: sticky::Sticky::default(),
             long_list: cull::Cull::default(),
-            opening: (!settings.skip_opening).then(|| {
-                let focus = cx.focus_handle();
-                window.focus(&focus, cx);
-                Opening {
-                    started: None,
-                    reveal: None,
-                    focus,
-                }
-            }),
+            opening: (!settings.skip_opening && !horizon_launcher::local::policy().low_resource)
+                .then(|| {
+                    let focus = cx.focus_handle();
+                    window.focus(&focus, cx);
+                    Opening {
+                        started: None,
+                        reveal: None,
+                        focus,
+                    }
+                }),
             updates: Updates::default(),
             checked: None,
             update_error: None,
@@ -728,22 +737,32 @@ impl Launcher {
         let keychain_tx = this.tx.clone();
         // Asking the keychain can block (D-Bus), so not on this thread.
         let accounts = this.accounts.clone();
-        std::thread::spawn(move || {
-            let store = account::store();
-            let _ = keychain_tx.send(Msg::Keychain(account::no_keychain()));
-            let _ = keychain_tx.send(Msg::Owner(accounts.has_owner(store)));
-        });
-        std::thread::spawn(move || {
-            let reused = backend::reuse_prepared_everywhere();
-            if !reused.is_empty() {
-                let _ = tx.send(Msg::Reused(reused));
-            }
-        });
+        if !horizon_launcher::local::policy().local_only {
+            std::thread::spawn(move || {
+                let store = account::store();
+                let _ = keychain_tx.send(Msg::Keychain(account::no_keychain()));
+                let _ = keychain_tx.send(Msg::Owner(accounts.has_owner(store)));
+            });
+        }
+        // Don't walk and copy resources across every installed version on a weak PC.
+        // Preparation and Play still complete the selected version's local files.
+        if !horizon_launcher::local::policy().low_resource {
+            std::thread::spawn(move || {
+                let reused = backend::reuse_prepared_everywhere();
+                if !reused.is_empty() {
+                    let _ = tx.send(Msg::Reused(reused));
+                }
+            });
+        }
         this.load_profile_heads();
         this.load_auth_statuses(true);
-        this.fetch_startup_releases();
-        this.fetch_links();
-        this.watch_shop(cx);
+        if !horizon_launcher::local::policy().local_only {
+            this.fetch_startup_releases();
+            this.fetch_links();
+            this.watch_shop(cx);
+        } else {
+            this.releases = Load::Ready(Vec::new());
+        }
         if home::getting_ready_preview() {
             this.preparing = true;
             this.play_when_prepared = this.selected().cloned();
@@ -769,9 +788,11 @@ impl Launcher {
             this.wardrobe_preview();
         }
         // What the game and the launcher kept, if the player allows it and there is a server.
-        telemetry::send_in_background();
-        telemetry::watch_playing(this.tx.clone());
-        telemetry::watch_official(this.tx.clone());
+        if !horizon_launcher::local::policy().local_only {
+            telemetry::send_in_background();
+            telemetry::watch_playing(this.tx.clone());
+            telemetry::watch_official(this.tx.clone());
+        }
         this
     }
 
@@ -1785,8 +1806,13 @@ impl Launcher {
             .filter(|(who, _, _)| !matches!(who, account::Player::Microsoft(_)))
             .map(|(_, name, _)| name)
             .collect();
+        let accounts = if horizon_launcher::local::policy().local_only {
+            &[][..]
+        } else {
+            &self.accounts.accounts[..]
+        };
         self.profile_heads
-            .request(&self.accounts.accounts, &offline, resources, &self.tx);
+            .request(accounts, &offline, resources, &self.tx);
     }
 
     fn begin_auth_job(&mut self, uuid: &str) -> Option<u64> {
@@ -1803,6 +1829,9 @@ impl Launcher {
     /// Only workers read the keychain or contact authentication services. Cached public status
     /// keeps drawing independent of keychain prompts, network timeouts and refresh operations.
     fn load_auth_statuses(&mut self, renew_due: bool) {
+        if horizon_launcher::local::policy().local_only {
+            return;
+        }
         self.auth_checked = Some(Instant::now());
         for account in self.accounts.accounts.clone() {
             let Some(generation) = self.begin_auth_job(&account.uuid) else {
@@ -2390,6 +2419,15 @@ fn play_press(prepared: bool, owner: Option<bool>, busy: bool) -> PlayPress {
         (true, _) => PlayPress::Play,
         (false, Some(true)) => PlayPress::PrepareThenPlay,
         (false, _) => PlayPress::Nothing,
+    }
+}
+
+/// Local preparation uses the player's files without an account ownership check.
+fn local_play_press(prepared: bool, owner: Option<bool>, busy: bool, local: bool) -> PlayPress {
+    if local && !prepared && !busy {
+        PlayPress::PrepareThenPlay
+    } else {
+        play_press(prepared, owner, busy)
     }
 }
 
@@ -3194,6 +3232,8 @@ impl Launcher {
         // No launcher folder with Minecraft on this computer: an owner needs none.
         let no_install = self.settings.minecraft_dir.is_none();
         let resources_value = match first {
+            _ if horizon_launcher::local::policy().local_only && !prepared =>
+                backend::resources_summary(false, !silent, &version),
             _ if self.preparing => tr("Preparing…").to_string(),
             Some(true) if no_install => trf(
                 "Not prepared. Play downloads Minecraft {version} from Mojang for your account and prepares it.",
@@ -5051,8 +5091,10 @@ impl Render for Launcher {
         let tint = (self.theme.dark && self.look.accent != horizon_theme::glass::ACCENT)
             .then(|| horizon_theme::glass::mix_oklab(self.look.accent, 0x767676, 0.58));
         let blur = self.look.blur;
-        self.scene
-            .update(cx, |scene, cx| scene.set_look(tint, blur, cx));
+        if !horizon_launcher::local::policy().low_resource {
+            self.scene
+                .update(cx, |scene, cx| scene.set_look(tint, blur, cx));
+        }
         self.scale = window.scale_factor();
         self.perf.frame();
         if self.bench.as_ref().is_some_and(perf::Bench::scrolling) {
@@ -5082,12 +5124,18 @@ impl Render for Launcher {
             .w_full()
             // Let the page shrink inside the padded flex row so long notices can wrap.
             .min_w_0()
-            .child(content)
-            .with_animation(
-                ElementId::named_usize("page", self.switches),
-                motion::eased(motion::POP),
-                |d, p| d.opacity(p).top(px(motion::POP_RISE * (1. - p))),
-            );
+            .child(content);
+        let content = if horizon_launcher::local::policy().low_resource {
+            content.into_any_element()
+        } else {
+            content
+                .with_animation(
+                    ElementId::named_usize("page", self.switches),
+                    motion::eased(motion::POP),
+                    |d, p| d.opacity(p).top(px(motion::POP_RISE * (1. - p))),
+                )
+                .into_any_element()
+        };
         let (reveal, held) = self.opening_phase(window);
         let ui = ease_out_cubic((reveal - 0.3) / 0.7);
         if self.opening.is_none() && window.focused(cx).is_none() {
@@ -5096,7 +5144,9 @@ impl Render for Launcher {
         // Dark: the new design's scene; Light keeps the dawn sky until the design has a light
         // look.
         glass::begin_build(window);
-        let sky = if t.dark {
+        let sky = if horizon_launcher::local::policy().low_resource {
+            div().size_full().bg(t.page).into_any_element()
+        } else if t.dark {
             self.scene.clone().into_any_element()
         } else {
             let (sky, next) = self.sky.render(
@@ -5166,9 +5216,11 @@ impl Render for Launcher {
             }))
             .capture_any_mouse_down(|_, _, _| KEYBOARD.store(false, Ordering::Relaxed))
             .on_mouse_move(cx.listener(|this, ev: &gpui::MouseMoveEvent, window, cx| {
-                let size = window.viewport_size();
-                this.scene
-                    .update(cx, |scene, cx| scene.point(ev.position, size, cx));
+                if !horizon_launcher::local::policy().low_resource {
+                    let size = window.viewport_size();
+                    this.scene
+                        .update(cx, |scene, cx| scene.point(ev.position, size, cx));
+                }
             }))
             .relative()
             .flex()
@@ -5608,6 +5660,24 @@ mod tests {
     /// An owner's Play works on a version not prepared yet: it prepares it (downloading
     /// Minecraft from Mojang when this computer has no install), then plays. Without an owner
     /// it stays off: signing in comes first.
+    #[test]
+    fn local_play_prepares_without_an_account_but_never_while_busy() {
+        use super::{local_play_press, PlayPress};
+        assert_eq!(
+            local_play_press(false, None, false, true),
+            PlayPress::PrepareThenPlay
+        );
+        assert_eq!(local_play_press(true, None, false, true), PlayPress::Play);
+        assert_eq!(
+            local_play_press(false, None, true, true),
+            PlayPress::Nothing
+        );
+        assert_eq!(
+            local_play_press(false, None, false, false),
+            PlayPress::Nothing
+        );
+    }
+
     #[test]
     fn play_prepares_first_for_an_owner() {
         use super::{play_press, PlayPress};

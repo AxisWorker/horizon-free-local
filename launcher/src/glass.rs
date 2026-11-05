@@ -160,6 +160,9 @@ pub fn float(radius: f32) -> Div {
 /// The piece at `bounds` (a plate's, or with `fillet` set to the device scale, a fillet's), made
 /// once and kept.
 fn image_at(bounds: Bounds<Pixels>, kind: Kind, fillet: f32) -> Option<Arc<RenderImage>> {
+    if horizon_launcher::local::policy().low_resource {
+        return None;
+    }
     PIECES.with_borrow_mut(|p| {
         let light = p.light;
         if !light && p.backdrop.is_none() {
@@ -195,6 +198,17 @@ fn image_at(bounds: Bounds<Pixels>, kind: Kind, fillet: f32) -> Option<Arc<Rende
 }
 
 fn paint(bounds: Bounds<Pixels>, kind: Kind, corners: Corners<Pixels>, window: &mut Window) {
+    if horizon_launcher::local::policy().low_resource {
+        let light = PIECES.with_borrow(|p| p.light);
+        let color = match (light, kind) {
+            (true, Kind::Glass) => 0xf2f3f5,
+            (true, Kind::Float) => 0xffffff,
+            (false, Kind::Glass) => 0x191a22,
+            (false, Kind::Float) => 0x242530,
+        };
+        window.paint_quad(gpui::fill(bounds, gpui::rgb(color)).corner_radii(corners));
+        return;
+    }
     if let Some(image) = image_at(bounds, kind, 0.) {
         // The piece's border texels go just outside the plate (see [`piece`]).
         let (w, h) = (

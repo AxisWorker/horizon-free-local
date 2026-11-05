@@ -170,6 +170,7 @@ pub fn get_bytes(url: &str) -> Result<Vec<u8>, String> {
 }
 
 pub(crate) fn get(url: &str) -> Result<ureq::Response, String> {
+    crate::local::require_online()?;
     let mut request = agent(url).get(url);
     // CI runners share addresses and hit GitHub's anonymous rate limit; they pass their own token.
     if let Some(token) = std::env::var("HORIZON_GITHUB_TOKEN")
@@ -1353,6 +1354,9 @@ pub fn complete_assets(tag: &str) {
 /// the same owner gate as any download from Mojang (`download_for_owner`), which keeps the files
 /// already whole. Called where a download is expected (`reuse_prepared_everywhere`), never on Play.
 fn refill_own_store(tag: &str) {
+    if crate::local::policy().local_only {
+        return;
+    }
     static ASKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     let own = data_dir().join("minecraft");
     let resources = resources_at(&versions_dir().join(tag));
@@ -1515,6 +1519,7 @@ fn download_for_owner(
     fetch: sources::Fetch,
     log: &dyn Fn(String),
 ) -> Result<(), String> {
+    crate::local::require_online()?;
     let mut accounts = account::Accounts::load();
     // The strict gate, never `launch_for_game`: the developer option that lets offline names
     // play without an owner must not download the game for them.
@@ -1934,9 +1939,20 @@ pub fn preparer(
         &manifest,
         log,
     )?;
-    let jar = data_dir()
-        .join("server-jars")
-        .join(format!("{version}.jar"));
+    let jar = std::env::var_os("HORIZON_SERVER_JAR")
+        .filter(|p| !p.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            data_dir()
+                .join("server-jars")
+                .join(format!("{version}.jar"))
+        });
+    if !reused && !jar.is_file() && crate::local::policy().local_only {
+        return Err(crate::i18n::tr(
+            "Local preparation needs your server jar. Set HORIZON_SERVER_JAR to its full path.",
+        )
+        .to_string());
+    }
     if !reused && !jar.exists() {
         let json: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&manifest).map_err(|e| e.to_string())?)
@@ -2309,8 +2325,11 @@ pub fn client_command(tag: &str) -> Command {
     strip_launcher_render_env(&mut cmd);
     cmd.current_dir(home).arg("--resources").arg(resources(tag));
     cmd.env_remove("HORIZON_ACCOUNT_SESSIONS");
-    // How the game asks for a renewed session (`account session`) while it runs.
-    if let Ok(exe) = std::env::current_exe() {
+    // A local game never uploads telemetry or asks the launcher to refresh a login.
+    if crate::local::policy().local_only {
+        cmd.env("HORIZON_TELEMETRY_URL", "off");
+        cmd.env_remove("HORIZON_LAUNCHER_EXE");
+    } else if let Ok(exe) = std::env::current_exe() {
         cmd.env("HORIZON_LAUNCHER_EXE", exe);
     }
     // PipeWire remembers volume and mute per application name. The game's own name is
@@ -2504,7 +2523,13 @@ pub fn client_as(tag: &str, who: Option<&account::Player>) -> Result<Command, St
         None => account::session_for_game(&game_home(), OFFLINE_PLAY).map_err(|e| e.to_string()),
         Some(who) => account::session_for_game_as(&game_home(), who),
     }
-    .map_err(|refused| format!("{refused} Sign in with `horizon-launcher account sign-in`."))?;
+    .map_err(|refused| {
+        if crate::local::policy().local_only {
+            refused
+        } else {
+            format!("{refused} Sign in with `horizon-launcher account sign-in`.")
+        }
+    })?;
     if let Err(e) = need_prepared(tag) {
         account::discard_unread_sessions();
         return Err(e);
@@ -2813,7 +2838,9 @@ fn launcher_asset_running_from(appimage: bool) -> Option<&'static str> {
 
 /// Development builds and `HORIZON_LAUNCHER_NO_SELF_UPDATE` never replace themselves.
 pub fn self_update_allowed() -> bool {
-    !cfg!(debug_assertions) && std::env::var_os("HORIZON_LAUNCHER_NO_SELF_UPDATE").is_none()
+    !crate::local::policy().local_only
+        && !cfg!(debug_assertions)
+        && std::env::var_os("HORIZON_LAUNCHER_NO_SELF_UPDATE").is_none()
 }
 
 /// The version in `horizon-launcher --version`'s output (`horizon-launcher 0.1.5`).
@@ -3440,8 +3467,13 @@ pub struct Settings {
 
 impl Settings {
     pub fn load() -> Self {
-        let mut settings =
-            Self::parse(&fs::read_to_string(data_dir().join("settings.json")).unwrap_or_default());
+        let text = fs::read_to_string(data_dir().join("settings.json")).unwrap_or_default();
+        let mut settings = Self::parse(&text);
+        let explicit_window_choice = serde_json::from_str::<serde_json::Value>(&text)
+            .is_ok_and(|v| v.get("while_playing").is_some());
+        if crate::local::policy().low_resource && !explicit_window_choice {
+            settings.while_playing = WhilePlaying::Minimize;
+        }
         // Horizon-free: offline play works without a Microsoft account, in the window and the CLI.
         settings.dev_offline = OFFLINE_PLAY;
         settings

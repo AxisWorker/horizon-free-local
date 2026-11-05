@@ -24,6 +24,7 @@ pub mod java;
 pub mod java_launch;
 pub mod launch;
 pub mod loaders;
+pub mod local;
 #[cfg(target_os = "macos")]
 mod mac_update;
 pub mod minecraft_versions;

@@ -33,6 +33,9 @@ impl Launcher {
             |i| i.name.as_str(),
         );
         let mut what = vec![format!("Minecraft: Java Edition {game}")];
+        if horizon_launcher::local::policy().local_only {
+            what.push(tr("Offline").to_string());
+        }
         if !tag.is_empty() {
             what.push(format!(
                 "Horizon {}",
@@ -159,7 +162,10 @@ impl Launcher {
         }
         // Players who answered the first-run question before the ping existed read about it
         // once here.
-        if !self.settings.ping_notice_seen && !self.collection.consent.needs_asking() {
+        if !horizon_launcher::local::policy().local_only
+            && !self.settings.ping_notice_seen
+            && !self.collection.consent.needs_asking()
+        {
             hero = hero.child(
                 crate::plate::plate(&n)
                     .flex()
@@ -243,7 +249,12 @@ impl Launcher {
             .child(label(
                 tr(if running { "Running" } else { "Play" }).to_string(),
             ));
-        match play_press(ready, self.owner, self.preparing || running) {
+        match local_play_press(
+            ready,
+            self.owner,
+            self.preparing || running,
+            horizon_launcher::local::policy().local_only,
+        ) {
             PlayPress::Nothing => play = disabled(play),
             PlayPress::Play => {
                 play = play.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {

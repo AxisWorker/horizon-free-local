@@ -44,6 +44,14 @@ pub(crate) enum Answer {
 
 /// GitHub's JSON for `url` (`https://api.github.com/...`). A 404 is the error `<url> answered 404`.
 pub fn json(url: &str) -> Result<serde_json::Value, String> {
+    if crate::local::policy().local_only {
+        return read_kept(&cache_dir().join(cache_name(url)), url)
+            .map(|kept| kept.body)
+            .ok_or_else(|| {
+                crate::i18n::tr("Local mode: no cached release list. Use an installed version.")
+                    .to_string()
+            });
+    }
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());

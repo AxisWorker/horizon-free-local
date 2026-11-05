@@ -206,6 +206,9 @@ pub(crate) enum Motion {
 
 pub(crate) fn motion() -> Motion {
     static MOTION: LazyLock<Motion> = LazyLock::new(|| {
+        if horizon_launcher::local::policy().low_resource {
+            return Motion::Still;
+        }
         match std::env::var("HORIZON_LAUNCHER_MOTION").as_deref() {
             Ok("off" | "reduced") => return Motion::Still,
             Ok("always") => return Motion::Always,

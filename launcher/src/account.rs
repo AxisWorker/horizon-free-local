@@ -1447,6 +1447,10 @@ fn keychain_or_why() -> Result<Box<dyn SecretStore>, String> {
 /// `HORIZON_NO_KEYCHAIN` (the launcher's own tests) or no keychain on macOS and Windows (said in the
 /// UI with [`no_keychain`]).
 pub fn store() -> &'static dyn SecretStore {
+    if crate::local::policy().local_only {
+        static LOCAL: OnceLock<MemoryStore> = OnceLock::new();
+        return LOCAL.get_or_init(MemoryStore::default);
+    }
     static STORE: OnceLock<Box<dyn SecretStore>> = OnceLock::new();
     STORE
         .get_or_init(|| {
@@ -1539,7 +1543,11 @@ impl Accounts {
         crate::backend::data_dir().join("accounts.json")
     }
     pub fn load() -> Self {
-        Self::load_from(&Self::path())
+        let mut accounts = Self::load_from(&Self::path());
+        if crate::local::policy().local_only {
+            accounts.selected = None;
+        }
+        accounts
     }
     pub fn save(&self) -> Result<(), String> {
         self.save_to(&Self::path())
@@ -2099,6 +2107,9 @@ pub fn session_for_game(
     game_home: &Path,
     offline_without_owner: bool,
 ) -> Result<GameSession, NoOwner> {
+    if crate::local::policy().local_only {
+        return Ok(GameSession::default());
+    }
     let mut accounts = Accounts::load();
     let pass = launch_for_game(
         &Endpoints::live(),
@@ -2123,6 +2134,14 @@ pub fn session_for_game(
 /// (#4952). What the services renewed (tokens, names, skins) is still kept; which account
 /// `account select` picked is not touched.
 pub fn session_for_game_as(game_home: &Path, who: &Player) -> Result<GameSession, String> {
+    if crate::local::policy().local_only {
+        return match who {
+            Player::Microsoft(_) => {
+                Err(crate::i18n::tr("Local mode: select an offline player name.").to_string())
+            }
+            _ => Ok(GameSession::default()),
+        };
+    }
     let mut accounts = Accounts::load();
     let pass = launch_as(
         &Endpoints::live(),

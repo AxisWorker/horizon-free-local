@@ -339,6 +339,9 @@ pub fn label(kind: Kind) -> &'static str {
 
 /// Sends what is waiting, if there is a server and the player allows it.
 pub fn send() -> Flush {
+    if crate::local::policy().local_only {
+        return Flush::Nothing;
+    }
     match horizon_telemetry::endpoint() {
         Some(url) => upload::flush(&home(), &url),
         None => Flush::Nothing,
@@ -367,6 +370,9 @@ pub fn status_json() -> serde_json::Value {
 
 /// [`send`] as the launcher closes, waiting at most a few seconds for it.
 pub fn send_before_exit() {
+    if crate::local::policy().local_only {
+        return;
+    }
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         send();
