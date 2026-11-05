@@ -1,88 +1,56 @@
-# Launcher local e leve
+# Horizon Free Local: instalar e jogar offline
 
-Esta alteração torna o launcher local e econômico por padrão. Não exige conta
-Microsoft para iniciar uma versão Horizon instalada e preparada no computador.
+## Primeira vez
 
-## O que muda
+1. Abra o launcher com internet.
+2. Escolha um nome local no seletor de jogador. Sem escolha, será usado `Player`.
+3. Crie uma nova instância **Vanilla**, selecione a versão do Minecraft Java e confirme.
+4. Clique em **Jogar**. O launcher baixa os arquivos do jogo, bibliotecas, recursos
+   e o Java necessário. Aguarde a instalação terminar; o jogo será iniciado.
+5. Nas próximas vezes, essa instância completamente instalada pode abrir sem internet.
 
-- Fundo simples, sem a cena animada, parallax ou imagens de desfoque dos painéis.
-- Abertura imediata, sem a animação inicial.
-- Consulta de resultados em segundo plano a cada 500 ms quando ocioso e 100 ms
-  durante preparação, instalação ou início do jogo. Teclado e mouse continuam
-  sendo tratados diretamente pelos eventos da interface.
-- Sem varrer e completar os recursos de todas as versões ao abrir. A versão
-  escolhida ainda recebe os arquivos locais necessários quando é preparada ou iniciada.
-- Sem consulta automática de atualizações, links remotos, loja ou contagens online.
-- Sem acessar o chaveiro ou renovar uma sessão Microsoft para jogar localmente.
-- Sem enviar a telemetria do launcher; o processo Horizon recebe
-  `HORIZON_TELEMETRY_URL=off` e não recebe sessões de outras contas.
-- Minimiza ao iniciar o jogo quando ainda não existe uma preferência salva.
+Não é necessário entrar em uma conta Microsoft no modo padrão. Uma instalação
+interrompida pode ser retomada: os arquivos já verificados são reaproveitados.
+O launcher não marca a instalação como completa se faltarem recursos.
 
-As contas existentes continuam no arquivo de contas. No modo local, a seleção de
-conta Microsoft é ignorada em memória; o nome offline escolhido continua disponível.
-O comando `account offline NOME` permite escolher esse nome sem fazer login.
+## Minecraft Java e Horizon
 
-## Usar
+A opção **Vanilla** executa o Minecraft Java na versão escolhida. **Horizon** é a
+reimplementação em Rust e suporta a versão definida por cada build; não executa
+arbitrariamente todas as versões antigas do Minecraft.
 
-Com uma versão já instalada e preparada, abra o launcher normalmente ou use:
+Fabric, Quilt, Forge e NeoForge usam o fluxo existente de instalação dos loaders.
+A compatibilidade depende das versões escolhidas. Servidores que exigem
+uma sessão autenticada continuam exigindo conta válida.
+
+Nenhum arquivo do Minecraft acompanha estes downloads. Os arquivos necessários
+são obtidos durante a instalação. O trabalho reduz o custo do launcher; não altera
+os requisitos gráficos do jogo nem promete ganhos de FPS. Não foram feitos benchmarks.
+
+## Terminal
 
 ```sh
 horizon-launcher account offline Gui
-horizon-launcher play
+horizon-launcher instance create "Vanilla 1.21.4" --minecraft 1.21.4
+horizon-launcher play --instance "Vanilla 1.21.4"
 ```
 
-O comando `play` usa o caminho de terminal existente e inicia sem criar a janela
-GPUI. É a opção com menos trabalho gráfico para o launcher. Ele acompanha o
-processo para manter o registro de tempo e os comandos configurados para depois do jogo.
+No Windows, substitua `horizon-launcher` por `.\horizon-free-local-windows-x64.exe`.
 
-Sem uma versão instalada, copie a pasta completa de uma instalação Horizon para
-`<pasta do launcher>/versions/<versão>`. Ela deve conter o executável, o marcador
-`.installed`, `research-lock.json` e os recursos/preparador correspondentes.
-`HORIZON_LAUNCHER_HOME` permite escolher a pasta do launcher; `HORIZON_HOME`
-escolhe a pasta de mundos e configurações do jogo.
+## Opções
 
-Se os recursos ainda precisarem ser preparados, use seus arquivos locais da
-versão correta do Minecraft, o Java correspondente e seu `server.jar`:
-
-```sh
-HORIZON_SERVER_JAR=/caminho/completo/server.jar \
-  horizon-launcher prepare --minecraft /caminho/minecraft
-```
-
-No PowerShell:
-
-```powershell
-$env:HORIZON_SERVER_JAR = 'C:\Minecraft\server.jar'
-.\horizon-launcher.exe prepare --minecraft 'C:\Minecraft'
-```
-
-Arquivos ausentes são informados como erro. O modo local não baixa o jogo, seus
-recursos nem o Java. Nenhum arquivo do Minecraft acompanha esta alteração.
-As verificações de versão e integridade dos recursos continuam no preparador.
-
-## Recursos online opcionais
-
-São escolhas independentes, aplicadas ao reiniciar o programa:
-
-| Variável | Comportamento |
+| Variável | Efeito |
 | --- | --- |
-| Sem variáveis | Local e leve |
-| `HORIZON_LAUNCHER_ONLINE=1` | Ativa os serviços online existentes; jogar offline continua disponível |
-| `HORIZON_LAUNCHER_LIGHTWEIGHT=0` | Restaura a cena e os efeitos visuais existentes |
+| Sem variáveis | Nome local, downloads de instalação permitidos e interface leve |
+| `HORIZON_LAUNCHER_OFFLINE=1` | Bloqueia downloads do launcher; precisa dos arquivos já instalados |
+| `HORIZON_LAUNCHER_ONLINE=1` | Ativa o fluxo original de contas Microsoft e serviços online |
+| `HORIZON_LAUNCHER_LIGHTWEIGHT=0` | Restaura os efeitos decorativos |
 
-O modo local controla os caminhos automáticos alterados do launcher e bloqueia
-seus downloads compartilhados. Não é um firewall para mods, programas externos,
-uma instância Java, ou conexões multiplayer que o jogador abrir explicitamente.
-Servidores que exigem autenticação continuam exigindo uma conta válida.
+O bloqueio de downloads não é um firewall para jogos, mods ou programas externos.
+`HORIZON_LAUNCHER_HOME` escolhe a pasta do launcher e `HORIZON_HOME`, a dos jogos.
+Para preparar Horizon com arquivos locais, `HORIZON_SERVER_JAR` aceita o caminho
+do seu `server.jar`, e `prepare --minecraft /caminho/minecraft` indica a pasta do jogo.
 
-## Compilar
-
-Na raiz do repositório, com Rust e as dependências gráficas da plataforma:
-
-```sh
-cargo build --release --manifest-path launcher/Cargo.toml
-```
-
-O executável fica em `launcher/target/release/`. Os testes não substituem uma
-medição em PC fraco: ganhos de RAM, CPU e tempo de abertura ainda devem ser
-medidos no mesmo hardware, com as mesmas versões instaladas e configurações.
+A interface leve mantém fundo simples, sem animação de abertura, parallax ou
+imagens de desfoque, com menor frequência de consulta quando ociosa. Não há login
+Microsoft, atualização automática, loja ou telemetria em segundo plano no modo local.
