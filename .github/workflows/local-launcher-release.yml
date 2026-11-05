@@ -1,0 +1,137 @@
+name: Local launcher - Windows and Linux x64
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag (local-v followed by a version)
+        required: true
+        default: local-v0.1.0
+        type: string
+  push:
+    tags: ['local-v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: local-launcher-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  HORIZON_LAUNCHER_ONLINE: '0'
+  HORIZON_LAUNCHER_LIGHTWEIGHT: '1'
+  HORIZON_TELEMETRY_URL: 'off'
+  HORIZON_LAUNCHER_NO_SELF_UPDATE: '1'
+  HORIZON_NO_AUDIO: '1'
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            platform: linux-x64
+            target: x86_64-unknown-linux-gnu
+            binary: horizon-launcher
+            rustflags: ''
+          - os: windows-latest
+            platform: windows-x64
+            target: x86_64-pc-windows-msvc
+            binary: horizon-launcher.exe
+            rustflags: '-C target-feature=+crt-static'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      RUSTFLAGS: ${{ matrix.rustflags }}
+      HORIZON_LAUNCHER_HOME: ${{ runner.temp }}/local-launcher-test/launcher
+      HORIZON_HOME: ${{ runner.temp }}/local-launcher-test/game
+      XDG_DATA_HOME: ${{ runner.temp }}/local-launcher-test/data
+      XDG_CONFIG_HOME: ${{ runner.temp }}/local-launcher-test/config
+      HORIZON_LAUNCHER_TRASH: ${{ runner.temp }}/local-launcher-test/trash
+      HORIZON_LAUNCHER_CLIPBOARD: ${{ runner.temp }}/local-launcher-test/clipboard
+      HORIZON_LAUNCHER_DESKTOP: ${{ runner.temp }}/local-launcher-test/desktop
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: launcher
+          shared-key: local-launcher-${{ matrix.platform }}
+      - name: Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev libfontconfig-dev libvulkan-dev libasound2-dev libudev-dev
+      - name: Formatting
+        run: cargo fmt --manifest-path launcher/Cargo.toml --check
+      - name: Local mode and translation tests
+        run: |
+          cargo test --release --locked --manifest-path launcher/Cargo.toml --target '${{ matrix.target }}' --lib local::tests
+          cargo test --release --locked --manifest-path launcher/Cargo.toml --target '${{ matrix.target }}' --lib i18n::tests
+      - name: Account-free process launch tests
+        run: cargo test --release --locked --manifest-path launcher/Cargo.toml --target '${{ matrix.target }}' --test owner_gate
+      - name: Build native launcher
+        run: cargo build --release --locked --manifest-path launcher/Cargo.toml --target '${{ matrix.target }}' --bin horizon-launcher
+      - name: Smoke test
+        run: launcher/target/${{ matrix.target }}/release/${{ matrix.binary }} --version
+      - name: Package
+        env:
+          LOCAL_PLATFORM: ${{ matrix.platform }}
+          LOCAL_BINARY: launcher/target/${{ matrix.target }}/release/${{ matrix.binary }}
+        run: python3 tools/package_local_launcher.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: local-launcher-${{ matrix.platform }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: local-launcher-*
+          path: dist
+          merge-multiple: true
+      - name: Publish binaries after both native builds pass
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^local-v[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$ ]] || { echo 'Invalid local release tag'; exit 1; }
+          test -f dist/horizon-free-local-windows-x64.exe
+          test -f dist/horizon-free-local-linux-x64.tar.gz
+          (cd dist && sha256sum *.exe *.zip *.tar.gz > SHA256SUMS.txt)
+          cat > release-notes.md <<'NOTES'
+          Launcher local e leve: conta Microsoft não é necessária para iniciar uma versão Horizon já instalada e preparada.
+
+          - Windows x64: baixe o `.exe` ou o `.zip`.
+          - Linux x64: extraia o `.tar.gz` e execute `./horizon-launcher`.
+          - Fundo simples, sem a cena animada nem o desfoque dos painéis.
+          - Consultas automáticas de atualização, loja e telemetria desativadas no modo local.
+          - Use seus próprios arquivos do Minecraft. Nenhum arquivo do jogo acompanha estes downloads.
+
+          Compilações nativas e testes de inicialização local executados pelo workflow. Não inclui benchmarks nem certificação de compatibilidade com todas as GPUs.
+          NOTES
+          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Horizon Free Local $RELEASE_TAG" --notes-file release-notes.md --draft
+          fi
+          gh release upload "$RELEASE_TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false
