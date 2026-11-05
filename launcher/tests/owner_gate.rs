@@ -26,6 +26,7 @@ fn launcher(root: &Path, args: &[&str]) -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_horizon-launcher"));
     cmd.args(args)
         .env("HORIZON_LAUNCHER_ONLINE", "0")
+        .env("HORIZON_LAUNCHER_OFFLINE", "1")
         .env("HORIZON_LAUNCHER_LIGHTWEIGHT", "1")
         .env("HORIZON_HOME", root.join("game"))
         .env("HORIZON_LAUNCHER_HOME", root.join("launcher"))
@@ -152,4 +153,63 @@ printf '%s|%s|%s\n' "$HORIZON_TELEMETRY_URL" "$HORIZON_ACCOUNT_SESSIONS" "$HORIZ
         accounts
     );
     let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Installed Java instances launch twice with the same local identity while launcher network
+/// access is explicitly disabled. A stand-in Java records the command; no game files are used.
+#[cfg(unix)]
+#[test]
+fn installed_java_plays_offline_without_reading_or_overwriting_a_saved_microsoft_account() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = home("java-local");
+    let minecraft = root.join("launcher/minecraft");
+    let version = minecraft.join("versions/1.21.4");
+    std::fs::create_dir_all(&version).unwrap();
+    std::fs::write(minecraft.join("version_manifest_v2.json"), r#"{
+        "latest":{"release":"1.21.4"},
+        "versions":[{"id":"1.21.4","type":"release","url":"unused","sha1":"unused"}]
+    }"#).unwrap();
+    std::fs::write(version.join(".downloaded"), "").unwrap();
+    std::fs::write(version.join("1.21.4.jar"), "stand-in client").unwrap();
+    std::fs::write(version.join("1.21.4.json"), r#"{
+        "id":"1.21.4","mainClass":"test.Main","libraries":[],
+        "javaVersion":{"majorVersion":21,"component":"java-runtime-delta"},
+        "arguments":{"jvm":["-cp","${classpath}"],"game":[
+            "--username","${auth_player_name}","--uuid","${auth_uuid}",
+            "--accessToken","${auth_access_token}","--userType","${user_type}"]}
+    }"#).unwrap();
+    let java_home = root.join("fake-java");
+    std::fs::create_dir_all(java_home.join("bin")).unwrap();
+    std::fs::write(java_home.join("release"), "JAVA_VERSION=\"21.0.5\"\n").unwrap();
+    let java = java_home.join("bin/java");
+    std::fs::write(&java, "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$HORIZON_HOME/java-args.txt\"\n").unwrap();
+    std::fs::set_permissions(&java, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::write(root.join("launcher/accounts.json"),
+        r#"{"accounts":[{"uuid":"069a79f444e94726a5befca90e38aaf5","name":"SavedPlayer"}],"selected":"069a79f444e94726a5befca90e38aaf5","offline":["Builder_1"],"offline_selected":"Builder_1"}"#).unwrap();
+    let accounts = std::fs::read(root.join("launcher/accounts.json")).unwrap();
+    for args in [
+        vec!["instance", "create", "Vanilla", "--minecraft", "1.21.4"],
+        vec!["instance", "java", "Vanilla", "--home", java_home.to_str().unwrap()],
+    ] {
+        let out = launcher(&root, &args).output().unwrap();
+        assert!(out.status.success(), "{}", text(&out));
+    }
+    let mut first = String::new();
+    for attempt in 0..2 {
+        let out = launcher(&root, &["play", "--instance", "Vanilla"]).output().unwrap();
+        assert!(out.status.success(), "{}", text(&out));
+        let args = std::fs::read_to_string(root.join("game/java-args.txt")).unwrap();
+        assert!(args.contains("--username\nBuilder_1\n"), "{args}");
+        assert!(args.contains("--accessToken\n0\n"), "{args}");
+        assert!(args.contains("--userType\nlegacy\n"), "{args}");
+        assert!(!args.contains("SavedPlayer"), "{args}");
+        if attempt == 0 {
+            first = args;
+        } else {
+            assert_eq!(args, first);
+        }
+    }
+    assert_eq!(std::fs::read(root.join("launcher/accounts.json")).unwrap(), accounts);
+    assert!(!root.join("game/sessions").exists());
+    std::fs::remove_dir_all(root).unwrap();
 }
