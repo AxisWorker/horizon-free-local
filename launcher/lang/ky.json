@@ -1,4 +1,8 @@
 {
+  "Local preparation needs your server jar. Set HORIZON_SERVER_JAR to its full path.": "Local preparation needs your server jar. Set HORIZON_SERVER_JAR to its full path.",
+  "Local mode: use your installed game files. Online downloads are disabled; restart with HORIZON_LAUNCHER_ONLINE=1 to enable online services.": "Local mode: use your installed game files. Online downloads are disabled; restart with HORIZON_LAUNCHER_ONLINE=1 to enable online services.",
+  "Local mode: select an offline player name.": "Local mode: select an offline player name.",
+  "Local mode: no cached release list. Use an installed version.": "Local mode: no cached release list. Use an installed version.",
   "Building {name}'s post-build step": "{name} куруунун кийинки кадамы",
   "In use": "Колдонууда",
   "Prepare": "Даярда",
