@@ -1,150 +1,122 @@
 # Horizon Free Local
 
-A lightweight, local-first variant of the Horizon launcher, forked from
-[0CYBER/horizon-free](https://github.com/0CYBER/horizon-free), which is based on
-[horizon-rust/horizon](https://github.com/horizon-rust/horizon).
+A lightweight launcher fork of [0CYBER/horizon-free](https://github.com/0CYBER/horizon-free), based on [Horizon](https://github.com/horizon-rust/horizon).
 
-The goal of this fork is to reduce unnecessary launcher work on lower-end PCs
-and let you start an installed, prepared Horizon version **without requiring a
-Microsoft account**. Local mode and lightweight rendering are enabled by default.
+**Choose a Minecraft Java version, create an instance, and press Play.** The first
+launch downloads that version, its libraries, assets and the required Java runtime.
+Once installation is complete, the instance can launch offline with a local player
+name. Microsoft sign-in is not required in the default local-account mode.
 
-## What changed in this fork
+## What changed in local-v0.2.0
 
-### Lighter interface and startup
+- Separated local identities from network access: installation downloads are now
+  allowed without turning on Microsoft account services.
+- New-instance dialogs default to **Vanilla**. Select the desired Minecraft Java
+  version from Mojang's catalog, create the instance and press **Play**.
+- Java instances use the selected local name, a stable Minecraft offline UUID and
+  a placeholder token. Saved Microsoft credentials are not read or renewed.
+- Downloads retain manifest and file hash verification. Incomplete assets fail the
+  installation instead of marking it complete; retrying keeps verified files.
+- Minecraft libraries/assets and the matching Java runtime are downloaded on
+  demand. Installed Java instances do not need a catalog refresh to start.
+- Explicit `HORIZON_LAUNCHER_OFFLINE=1` blocks launcher downloads for users who
+  want a strict offline session. Default local-account mode permits installation.
+- The Horizon build catalog can load at startup, without automatic installation,
+  self-update, shop polling, live player counts or Microsoft startup workers.
 
-- Replaced the animated background scene with a simple background in lightweight mode.
-- Disabled background parallax, per-panel blur images, and the opening animation.
-- Removed the page entrance animation in lightweight mode and enabled reduced motion.
-- Reduced background result polling to 500 ms while idle and 100 ms while preparing,
-  installing, or starting the game. Keyboard and mouse input remain event-driven.
-- Stopped scanning and completing resources for every installed version at startup
-  in lightweight mode. The selected version can still complete its local resources
-  when prepared or started.
-- Made minimizing when the game starts the default for users without a saved preference.
-  An existing preference is preserved.
+The original lightweight changes remain: no animated background, parallax, panel
+blur or entrance animations; reduced idle polling; no scan of every version's
+resources at startup; minimize on play when no preference has been saved.
+Launcher telemetry is disabled in local-account mode, and Horizon game processes
+receive `HORIZON_TELEMETRY_URL=off` without inherited account sessions.
 
-### Local play without a Microsoft account
+## First installation
 
-- The normal local launch path does not renew a Microsoft session or access the OS keychain.
-- A previously saved Microsoft selection is ignored in local mode without deleting
-  the stored account. Offline names remain available.
-- Microsoft accounts are hidden from the local player switcher.
-- The game is started without a session file, inherited account sessions, or a
-  launcher callback for token refresh.
-- Local preparation accepts an existing server jar through `HORIZON_SERVER_JAR`.
-- Missing files are reported instead of falling back to a Microsoft account download flow.
+1. Download the Windows x64 or Linux x64 launcher from [Releases](https://github.com/AxisWorker/horizon-free-local/releases).
+2. Open it with internet access. Choose a local player name in the player switcher
+   (the default is `Player` if no name has been selected).
+3. Create a **New instance**, choose **Vanilla**, select the Minecraft Java version
+   you want, and create it.
+4. Press **Play**. Wait for the game files, assets and required Java runtime to finish
+   installing. The game then starts in the instance's own folder.
+5. Future launches of that completely installed instance can run without internet.
 
-### Fewer automatic online services
+Fabric, Quilt, Forge and NeoForge options use the existing loader flow. Availability
+and compatibility depend on the selected Minecraft and loader versions. This fork
+does not promise that every historical version or third-party modpack will work.
+Online-authenticated multiplayer services still need a valid account.
 
-- No automatic release checks, remote link refresh, shop polling, or live player counts
-  at startup in local mode.
-- The shared download path refuses online downloads in local mode; cached GitHub
-  metadata can still be read without contacting the network.
-- Launcher telemetry uploads are disabled in local mode. The Horizon game process
-  receives `HORIZON_TELEMETRY_URL=off`.
-- The mod registry may apply its cached revocation information before play, but does
-  not refresh it in the background in local mode.
+**Minecraft Java instances and Horizon builds are different.** Java instances run
+the selected original Minecraft version on Java. Horizon is a Rust reimplementation
+with its own supported Minecraft version and preparation flow; selecting an older
+Java version does not make Horizon emulate it. This work reduces launcher overhead,
+not the game's hardware requirements. No performance benchmarks were performed.
 
-These changes target launcher overhead. They do not replace Horizon's renderer,
-remove its graphics requirements, or promise a particular FPS/RAM improvement.
-No performance benchmarks were requested or performed.
+No Minecraft jars, assets, Java runtimes or prepared resources are bundled with
+this repository or the launcher downloads; installation fetches the required files.
 
-## Local use
-
-You need an installed Horizon version and its prepared resources, or your own
-matching Minecraft files and Java runtime to prepare them. No Minecraft jars,
-assets, or prepared resources are included in this repository or its launcher packages.
+## Command line
 
 ```sh
 horizon-launcher account offline YourName
-horizon-launcher play
+horizon-launcher instance versions
+horizon-launcher instance create "Vanilla 1.21.4" --minecraft 1.21.4
+horizon-launcher play --instance "Vanilla 1.21.4"
 ```
 
-The existing `play` command starts the game without opening the GPUI launcher
-window, while keeping the normal process tracking and configured post-exit behavior.
+The first Play installs missing files. Subsequent launches reuse them. `play` runs
+without creating the graphical launcher window. On Windows, use
+`.\horizon-free-local-windows-x64.exe` instead of `horizon-launcher`.
 
-For local preparation:
+For a completely installed instance with launcher downloads explicitly blocked:
 
 ```sh
-HORIZON_SERVER_JAR=/absolute/path/server.jar \
-  horizon-launcher prepare --minecraft /path/to/minecraft
+HORIZON_LAUNCHER_OFFLINE=1 horizon-launcher play --instance "Vanilla 1.21.4"
 ```
 
-On Windows PowerShell:
-
-```powershell
-$env:HORIZON_SERVER_JAR = 'C:\Minecraft\server.jar'
-.\horizon-launcher.exe prepare --minecraft 'C:\Minecraft'
-```
-
-`HORIZON_LAUNCHER_HOME` selects the launcher data directory. `HORIZON_HOME` selects
-its game data directory. Local mode does not download missing game files or Java.
+For Horizon preparation from existing local files, `HORIZON_SERVER_JAR` still
+accepts your server jar path and `prepare --minecraft /path/to/minecraft` selects
+its Minecraft folder. Missing installation files require internet unless supplied
+locally. `HORIZON_LAUNCHER_HOME` and `HORIZON_HOME` select the launcher and game data
+folders, respectively.
 
 ## Optional modes
 
-Set these variables before starting the launcher:
-
 | Setting | Behavior |
 | --- | --- |
-| No overrides | Local mode and lightweight UI |
-| `HORIZON_LAUNCHER_ONLINE=1` | Enables the existing online services |
-| `HORIZON_LAUNCHER_LIGHTWEIGHT=0` | Restores the existing decorative UI effects |
+| No overrides | Local player names, installation downloads, lightweight UI |
+| `HORIZON_LAUNCHER_OFFLINE=1` | Refuse launcher downloads; use installed files |
+| `HORIZON_LAUNCHER_ONLINE=1` | Opt into the original Microsoft account and online services flow |
+| `HORIZON_LAUNCHER_LIGHTWEIGHT=0` | Restore decorative launcher effects |
 
-Local mode controls the launcher's automatic paths and shared downloads. It is
-not a firewall for mods, external programs, Java instances, or multiplayer
-connections you explicitly open. Authenticated servers still require a valid account.
+The offline flag controls the launcher's shared download path. It is not a firewall
+for games, mods, external programs or multiplayer connections.
 
-## Windows x64 and Linux x64 builds
+## Builds and verification
 
-The **Local launcher - Windows and Linux x64** workflow builds on native Windows
-and Linux runners, runs local-mode and translation tests, packages the launcher,
-and publishes only after both builds pass.
-
-Intended release files:
-
-- `horizon-free-local-windows-x64.exe`
-- `horizon-free-local-windows-x64.zip`
-- `horizon-free-local-linux-x64.tar.gz`
-- `SHA256SUMS.txt`
-
-Check [Releases](https://github.com/AxisWorker/horizon-free-local/releases) for
-completed builds. Workflow configuration alone does not mean binaries have been
-built or published successfully.
-
-To build from source with Rust and the platform's native dependencies:
+The **Local launcher - Windows and Linux x64** workflow runs native builds and
+launcher tests before publishing the Windows `.exe`/`.zip`, Linux `.tar.gz` and
+`SHA256SUMS.txt`. A configured workflow alone does not mean a release has passed;
+check the corresponding run and published release.
 
 ```sh
 cargo build --release --locked --manifest-path launcher/Cargo.toml
 ```
 
-The binary is written under `launcher/target/release/`.
-
-## Validation
-
-The prepared launcher changes passed:
-
-- `cargo check --locked --all-targets`
-- `cargo clippy --locked --all-targets -- -D warnings`
-- Rust formatting checks
-- 483 launcher library tests, 90 launcher binary tests, and 4 local CLI/MCP launch tests
-- Public-tree checks and both packaging formats using a disposable stand-in binary
-
-The full Python self-check was **not fully green**: its process RSS test received
-`None` from this environment and failed when comparing it with an integer.
-Native Windows execution and visual testing on a physical GPU were not performed
-in the local development environment. Native release builds must pass their own workflow.
-
-See [the validation record](docs/launcher-local-validation.md) and
-[the local usage guide](docs/launcher-local.md) for details (Portuguese).
+Tests cover the independent network/account policy, verified downloads and resume,
+Java launch arguments, local names and repeated offline process launches using
+made-up fixtures. No actual Minecraft gameplay, physical GPU compatibility or
+performance is certified by those fixtures. The earlier validation record is in
+[docs/launcher-local-validation.md](docs/launcher-local-validation.md).
 
 ## Credits and license
 
 Original Horizon work: the Horizon authors and contributors. Offline-play fork:
-0CYBER. Local-first and lightweight launcher changes were prepared for AxisWorker
-with OpenAI Codex. Original attribution and third-party notices are preserved.
+0CYBER. Local installation and lightweight launcher changes were prepared for
+AxisWorker with OpenAI Codex. Original attribution and notices are preserved.
 
 [MIT license](LICENSE) for the project's original work; dependencies retain their
-own licenses. This is unofficial and is not affiliated with Mojang or Microsoft.
+own licenses. Unofficial; not affiliated with Mojang or Microsoft.
 
 <details>
 <summary>Original upstream README (reference; its online setup instructions differ from this fork)</summary>
