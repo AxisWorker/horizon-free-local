@@ -1,10 +1,9 @@
-//! The owner gate from the outside: with no account that owns Minecraft: Java Edition in the
-//! launcher, neither `horizon-launcher play` nor the MCP server's play starts the game.
+//! A local launch needs prepared files, never a Microsoft account. No real player data is used.
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
-const REFUSED: &str = "Sign in with a Microsoft account that owns Minecraft: Java Edition to play.";
+const MISSING: &str = "is not prepared yet";
 
 /// Fresh homes with one installed (not prepared) version and an offline name, as a player who
 /// played offline before the gate has.
@@ -26,6 +25,8 @@ fn home(name: &str) -> PathBuf {
 fn launcher(root: &Path, args: &[&str]) -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_horizon-launcher"));
     cmd.args(args)
+        .env("HORIZON_LAUNCHER_ONLINE", "0")
+        .env("HORIZON_LAUNCHER_LIGHTWEIGHT", "1")
         .env("HORIZON_HOME", root.join("game"))
         .env("HORIZON_LAUNCHER_HOME", root.join("launcher"))
         .env("XDG_DATA_HOME", root.join("data"))
@@ -44,13 +45,14 @@ fn text(out: &Output) -> String {
 }
 
 #[test]
-fn the_cli_refuses_to_play_without_an_owner() {
+fn the_cli_reports_missing_resources_instead_of_asking_for_an_account() {
     let root = home("cli");
     let out = launcher(&root, &["play"]).output().unwrap();
     let said = text(&out);
     assert!(!out.status.success(), "{said}");
-    assert!(said.contains(REFUSED), "{said}");
-    assert!(said.contains("horizon-launcher account sign-in"), "{said}");
+    assert!(said.contains(MISSING), "{said}");
+    assert!(!said.contains("Sign in with a Microsoft account"), "{said}");
+    assert!(said.contains("horizon-launcher prepare"), "{said}");
     // Nothing of the game ran, and the offline name is still there.
     assert!(!root.join("game/sessions").exists());
     let accounts = std::fs::read_to_string(root.join("launcher/accounts.json")).unwrap();
@@ -59,7 +61,7 @@ fn the_cli_refuses_to_play_without_an_owner() {
 }
 
 #[test]
-fn the_mcp_server_refuses_to_play_without_an_owner() {
+fn the_mcp_server_reports_missing_resources_without_an_account_gate() {
     let root = home("mcp");
     let mut child = launcher(&root, &["mcp"])
         .stdin(Stdio::piped())
@@ -84,6 +86,70 @@ fn the_mcp_server_refuses_to_play_without_an_owner() {
         .expect("a reply to play");
     assert_eq!(reply["result"]["isError"], true, "{reply}");
     let said = reply["result"]["content"][0]["text"].as_str().unwrap();
-    assert!(said.contains(REFUSED), "{said}");
+    assert!(said.contains(MISSING), "{said}");
+    assert!(!said.contains("Sign in with a Microsoft account"), "{said}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A harmless stand-in records the actual process arguments and telemetry policy. It has no
+/// game code or assets: this proves the CLI reaches process launch with only local files.
+#[cfg(unix)]
+#[test]
+fn prepared_local_game_starts_without_tokens_and_keeps_the_offline_name() {
+    check_prepared_local_game(false);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_saved_microsoft_selection_is_ignored_without_overwriting_the_accounts_file() {
+    check_prepared_local_game(true);
+}
+
+#[cfg(unix)]
+fn check_prepared_local_game(saved_account: bool) {
+    use std::os::unix::fs::PermissionsExt;
+    let root = home(if saved_account {
+        "saved-account"
+    } else {
+        "local-ready"
+    });
+    if saved_account {
+        std::fs::write(root.join("launcher/accounts.json"),
+            r#"{"accounts":[{"uuid":"069a79f444e94726a5befca90e38aaf5","name":"SavedPlayer"}],"selected":"069a79f444e94726a5befca90e38aaf5","offline":["Builder_1"],"offline_selected":"Builder_1"}"#).unwrap();
+    }
+    let version = root.join("launcher/versions/v2026.10.27.01");
+    let resources = version.join(".local/horizon-client/26.3");
+    std::fs::create_dir_all(&resources).unwrap();
+    std::fs::write(resources.join("horizon-resources.json"), "{}").unwrap();
+    std::fs::write(
+        version.join("research-lock.json"),
+        r#"{"minecraft":{"version":"26.3"}}"#,
+    )
+    .unwrap();
+    let program = version.join("horizon-client");
+    std::fs::write(&program, r#"#!/bin/sh
+printf '%s\n' "$@" > "$HORIZON_HOME/probe-args.txt"
+printf '%s|%s|%s\n' "$HORIZON_TELEMETRY_URL" "$HORIZON_ACCOUNT_SESSIONS" "$HORIZON_LAUNCHER_EXE" > "$HORIZON_HOME/probe-env.txt"
+"#).unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let accounts = std::fs::read(root.join("launcher/accounts.json")).unwrap();
+    let out = launcher(&root, &["play"])
+        .env("HORIZON_ACCOUNT_SESSIONS", "must-not-reach-the-game")
+        .env("HORIZON_LAUNCHER_EXE", "must-not-reach-the-game")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", text(&out));
+    let args = std::fs::read_to_string(root.join("game/probe-args.txt")).unwrap();
+    assert!(args.contains("--name\nBuilder_1\n"), "{args}");
+    assert!(!args.contains("--session-file"), "{args}");
+    assert_eq!(
+        std::fs::read_to_string(root.join("game/probe-env.txt")).unwrap(),
+        "off||\n"
+    );
+    assert!(!root.join("game/sessions").exists());
+    assert_eq!(
+        std::fs::read(root.join("launcher/accounts.json")).unwrap(),
+        accounts
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
