@@ -802,6 +802,9 @@ pub fn before_play(home: &Path) {
             eprintln!("{line}");
         }
     }
+    if crate::local::policy().local_only {
+        return;
+    }
     let home = home.to_owned();
     std::thread::spawn(move || {
         if let Ok(index) = index() {
